@@ -121,7 +121,8 @@
    ================================================================ */
 const SPLAT_URL = 'house.spz';
 
-import { WebGPURenderer, Scene, PerspectiveCamera, Vector3, Euler, Box3, Color }
+import { WebGPURenderer, Scene, PerspectiveCamera, Vector3, Euler, Box3, Color,
+         BufferGeometry, BufferAttribute }
   from 'three/webgpu';
 import { SPZLoader } from 'three/addons/loaders/SPZLoader.js';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
@@ -154,6 +155,92 @@ const scene = new Scene();
 scene.background = new Color(0x14100b);
 const camera = new PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 1000);
 
+/* ---------------- floater cleanup + robust framing ---------------- */
+// The export contains a few hundred enormous "floater" splats (tens to
+// hundreds of units wide in a ~200-unit scan). From inside a floater's
+// volume the view is a starburst, so any splat wider than a real surface
+// could ever be gets dropped before rendering.
+function maxPrincipalSigma(covAttr, i){
+  // power iteration on the 3x3 covariance, stored as xx,xy,xz,yy,yz,zz
+  const m00 = covAttr.getComponent(i,0), m01 = covAttr.getComponent(i,1),
+        m02 = covAttr.getComponent(i,2), m11 = covAttr.getComponent(i,3),
+        m12 = covAttr.getComponent(i,4), m22 = covAttr.getComponent(i,5);
+  let x = 1, y = 1, z = 1;
+  for (let k = 0; k < 16; k++){
+    const nx = m00*x + m01*y + m02*z,
+          ny = m01*x + m11*y + m12*z,
+          nz = m02*x + m12*y + m22*z;
+    const l = Math.hypot(nx, ny, nz) || 1;
+    x = nx/l; y = ny/l; z = nz/l;
+  }
+  const ax = m00*x + m01*y + m02*z,
+        ay = m01*x + m11*y + m12*z,
+        az = m02*x + m12*y + m22*z;
+  return Math.sqrt(Math.max(0, x*ax + y*ay + z*az));
+}
+
+function makeIsotropic(geometry, sigma){
+  // Replace anisotropic covariances with small isotropic ones.
+  // The trained covariances are highly elongated, which renders as
+  // streaks/scratches instead of a solid model. Isotropic blobs
+  // reveal the true point geometry.
+  const cov = geometry.getAttribute('covariance');
+  const v = sigma * sigma;
+  for (let i = 0; i < cov.count; i++){
+    cov.setComponent(i, 0, v);
+    cov.setComponent(i, 1, 0);
+    cov.setComponent(i, 2, 0);
+    cov.setComponent(i, 3, v);
+    cov.setComponent(i, 4, 0);
+    cov.setComponent(i, 5, v);
+  }
+  cov.needsUpdate = true;
+  return geometry;
+}
+
+function removeFloaters(geometry, sigmaMax){
+  const pos = geometry.getAttribute('position');
+  const cov = geometry.getAttribute('covariance');
+  const count = pos.count;
+  const keep = [];
+  for (let i = 0; i < count; i++)
+    if (maxPrincipalSigma(cov, i) <= sigmaMax) keep.push(i);
+  const nk = keep.length;
+  const subset = (attr) => {
+    const itemSize = attr.itemSize, src = attr.array;
+    const out = new src.constructor(nk * itemSize);
+    for (let j = 0; j < nk; j++){
+      const s = keep[j] * itemSize, d = j * itemSize;
+      for (let k = 0; k < itemSize; k++) out[d+k] = src[s+k];
+    }
+    const na = new BufferAttribute(out, itemSize);
+    na.normalized = attr.normalized;
+    return na;
+  };
+  const g = new BufferGeometry();
+  g.setAttribute('position', subset(pos));
+  g.setAttribute('covariance', subset(cov));
+  g.setAttribute('color', subset(geometry.getAttribute('color')));
+  for (let d = 1; d <= 3; d++){
+    const sh = geometry.getAttribute('sphericalHarmonics' + d);
+    if (sh) g.setAttribute('sphericalHarmonics' + d, subset(sh));
+  }
+  return { geometry: g, kept: nk, removed: count - nk };
+}
+
+// Percentile bounding box: a few far-flung points must not dictate framing.
+function robustBox(geometry, lo = 0.02, hi = 0.98){
+  const pos = geometry.getAttribute('position');
+  const n = pos.count;
+  const xs = new Float32Array(n), ys = new Float32Array(n), zs = new Float32Array(n);
+  for (let i = 0; i < n; i++){ xs[i] = pos.getX(i); ys[i] = pos.getY(i); zs[i] = pos.getZ(i); }
+  xs.sort(); ys.sort(); zs.sort();
+  const q = (a, p) => a[Math.min(n - 1, Math.floor(p * n))];
+  return new Box3(
+    new Vector3(q(xs, lo), q(ys, lo), q(zs, lo)),
+    new Vector3(q(xs, hi), q(ys, hi), q(zs, hi)));
+}
+
 /* ---------------- load the splat ---------------- */
 let splat = null;
 const spawnPos = new Vector3(), spawnQuat = camera.quaternion.clone();
@@ -175,16 +262,18 @@ try {
   });
   setProgress(1, 'Preparing the rooms\u2026');
 
-  splat = new GaussianSplat(geometry);
+  const cleaned = makeIsotropic(geometry, 2);
+  console.log(`isotropic cleanup: ${cleaned.getAttribute('position').count} splats`);
+  splat = new GaussianSplat(cleaned);
   splat.frustumCulled = false;
   scene.add(splat);
 
   // Start the camera just outside the scan, facing it, at eye height-ish.
-  const bbox = new Box3().setFromBufferAttribute(geometry.getAttribute('position'));
+  const bbox = robustBox(cleaned);
   const center = bbox.getCenter(new Vector3());
   const size = bbox.getSize(new Vector3()).length() || 1;
   const dir = new Vector3(0.45, 0.32, 1).normalize();
-  camera.position.copy(center).addScaledVector(dir, size * 0.75);
+  camera.position.copy(center).addScaledVector(dir, size * 0.9);
   camera.lookAt(center);
   spawnPos.copy(camera.position);
   spawnQuat.copy(camera.quaternion);
