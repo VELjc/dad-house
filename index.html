@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="icon" href="data:,">
+<title>Dad's House &mdash; 3D Walkthrough</title>
+<style>
+  :root{
+    --bg:#14100b;
+    --cream:#f5ead6;
+    --cream-dim:#c9b995;
+    --amber:#e8a33d;
+    --card:rgba(24,19,12,.92);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--cream);-webkit-user-select:none;user-select:none}
+  #app{position:fixed;inset:0}
+  #app canvas{display:block;width:100%;height:100%}
+  #vignette{position:fixed;inset:0;pointer-events:none;z-index:2;
+    background:radial-gradient(ellipse at center,transparent 55%,rgba(10,7,4,.55) 100%)}
+
+  /* ---------- loading screen ---------- */
+  #loader{position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(ellipse at 50% 35%,#241b10 0%,#14100b 70%)}
+  .card{background:var(--card);border:1px solid rgba(232,163,61,.25);border-radius:18px;
+    padding:44px 52px;text-align:center;max-width:min(92vw,460px);
+    box-shadow:0 24px 80px rgba(0,0,0,.55)}
+  .card h1{font-family:Georgia,"Times New Roman",serif;font-weight:400;font-size:52px;
+    letter-spacing:.04em;color:var(--cream)}
+  .card .rule{width:56px;height:2px;background:var(--amber);margin:18px auto;opacity:.85}
+  .card .sub{color:var(--cream-dim);font-size:15px;line-height:1.55;margin-bottom:26px}
+  .progress{height:6px;border-radius:3px;background:rgba(245,234,214,.12);overflow:hidden;margin-bottom:14px}
+  #bar{height:100%;width:0%;border-radius:3px;background:linear-gradient(90deg,#c47b21,var(--amber));
+    transition:width .25s ease}
+  #loadStatus{font-size:13px;color:var(--cream-dim);min-height:20px;margin-bottom:8px}
+  #startBtn{margin-top:14px;font-size:17px;padding:13px 42px;border-radius:999px;border:none;cursor:pointer;
+    background:var(--amber);color:#241a08;font-weight:600;letter-spacing:.02em;
+    transition:transform .15s ease,box-shadow .15s ease}
+  #startBtn:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(232,163,61,.35)}
+  #startBtn[hidden]{display:none}
+  #loadError{color:#e88a7a;font-size:13px;margin-top:10px;line-height:1.5}
+
+  /* ---------- controls hint ---------- */
+  #hint{position:fixed;left:14px;bottom:14px;z-index:5;max-width:320px;
+    background:rgba(20,16,11,.78);border:1px solid rgba(232,163,61,.22);border-radius:12px;
+    padding:12px 16px;font-size:12.5px;line-height:1.75;color:var(--cream-dim);
+    backdrop-filter:blur(6px);opacity:0;visibility:hidden}
+  #hint b{color:var(--cream);font-weight:600}
+  #hint .k{display:inline-block;min-width:20px;text-align:center;background:rgba(245,234,214,.12);
+    border:1px solid rgba(245,234,214,.2);border-radius:4px;padding:0 5px;margin-right:2px;
+    font-size:11px;color:var(--cream)}
+  #padStatus{color:var(--amber)}
+
+  /* ---------- click-to-lock pill ---------- */
+  #lockPill{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:5;
+    background:rgba(20,16,11,.85);border:1px solid rgba(232,163,61,.4);color:var(--cream);
+    border-radius:999px;padding:10px 22px;font-size:14px;cursor:pointer;display:none}
+  #lockPill.show{display:block}
+
+  /* ---------- touch joystick ---------- */
+  #stick{position:fixed;z-index:6;width:120px;height:120px;border-radius:50%;display:none;
+    border:2px solid rgba(245,234,214,.35);background:rgba(245,234,214,.06);pointer-events:none}
+  #knob{position:absolute;left:50%;top:50%;width:52px;height:52px;border-radius:50%;
+    background:rgba(232,163,61,.75);transform:translate(-50%,-50%)}
+
+  /* ---------- fatal error ---------- */
+  #err{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;
+    background:rgba(10,7,4,.94);padding:24px;text-align:center}
+  #err[hidden]{display:none}
+  #err p{max-width:420px;line-height:1.6;color:var(--cream-dim);font-size:14px}
+  #err b{color:var(--cream)}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+    "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+    "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.tsl.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="vignette"></div>
+
+<div id="loader">
+  <div class="card">
+    <h1>Home</h1>
+    <div class="rule"></div>
+    <p class="sub">A walkthrough of Dad&rsquo;s childhood home.<br>Take your time, look around.</p>
+    <div class="progress"><div id="bar"></div></div>
+    <p id="loadStatus">Loading&hellip;</p>
+    <button id="startBtn" hidden>Step inside</button>
+    <p id="loadError" hidden></p>
+  </div>
+</div>
+
+<div id="hint">
+  <div><b>Walk:</b> <span class="k">W</span><span class="k">A</span><span class="k">S</span><span class="k">D</span> or arrow keys &middot; <span class="k">Space</span> up &middot; <span class="k">C</span> down &middot; <span class="k">Shift</span> run</div>
+  <div><b>Look:</b> mouse (click to capture) &middot; <span class="k">R</span> back to start &middot; <span class="k">H</span> hide this</div>
+  <div><b>Controller:</b> left stick walk &middot; right stick look &middot; <span class="k">A</span> start</div>
+  <div id="padStatus">No controller detected</div>
+</div>
+
+<button id="lockPill">Click to look around</button>
+
+<div id="stick"><div id="knob"></div></div>
+
+<div id="err" hidden><p><b>Something went wrong starting the 3D view.</b><br><span id="errMsg"></span><br><br>Try opening this page in Chrome, Edge, or Safari.</p></div>
+
+<script type="module">
+/* ================================================================
+   CONFIG: which scan to load.
+   Put your exported .spz file next to index.html and change this:
+       const SPLAT_URL = 'house.spz';
+   ================================================================ */
+const SPLAT_URL = 'house.spz';
+
+import { WebGPURenderer, Scene, PerspectiveCamera, Vector3, Euler, Box3, Color }
+  from 'three/webgpu';
+import { SPZLoader } from 'three/addons/loaders/SPZLoader.js';
+import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
+
+const $ = id => document.getElementById(id);
+const bar = $('bar'), loadStatus = $('loadStatus'), startBtn = $('startBtn'),
+      loaderEl = $('loader'), hintEl = $('hint'), lockPill = $('lockPill');
+
+function fatal(msg){
+  console.error(msg);
+  $('errMsg').textContent = String(msg && msg.message || msg);
+  $('err').hidden = false;
+}
+addEventListener('error', e => { if ($('err').hidden) fatal(e.message || e.error); });
+
+/* ---------------- renderer / scene ---------------- */
+let renderer;
+try {
+  renderer = new WebGPURenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  $('app').prepend(renderer.domElement);
+  await renderer.init();
+} catch (e) {
+  fatal('3D could not start: ' + (e && e.message || e));
+  throw e;
+}
+
+const scene = new Scene();
+scene.background = new Color(0x14100b);
+const camera = new PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 1000);
+
+/* ---------------- load the splat ---------------- */
+let splat = null;
+const spawnPos = new Vector3(), spawnQuat = camera.quaternion.clone();
+
+function setProgress(frac, label){
+  if (frac == null) { bar.style.width = '100%'; bar.style.opacity = '.45'; }
+  else { bar.style.width = Math.round(frac * 100) + '%'; bar.style.opacity = '1'; }
+  if (label) loadStatus.textContent = label;
+}
+
+try {
+  const geometry = await new Promise((resolve, reject) => {
+    new SPZLoader().load(SPLAT_URL, resolve,
+      e => {
+        if (e.lengthComputable && e.total > 0) setProgress(e.loaded / e.total, 'Loading the house\u2026');
+        else setProgress(null, 'Loading the house\u2026');
+      },
+      err => reject(err || new Error('load failed')));
+  });
+  setProgress(1, 'Preparing the rooms\u2026');
+
+  splat = new GaussianSplat(geometry);
+  splat.frustumCulled = false;
+  scene.add(splat);
+
+  // Start the camera just outside the scan, facing it, at eye height-ish.
+  const bbox = new Box3().setFromBufferAttribute(geometry.getAttribute('position'));
+  const center = bbox.getCenter(new Vector3());
+  const size = bbox.getSize(new Vector3()).length() || 1;
+  const dir = new Vector3(0.45, 0.32, 1).normalize();
+  camera.position.copy(center).addScaledVector(dir, size * 0.75);
+  camera.lookAt(center);
+  spawnPos.copy(camera.position);
+  spawnQuat.copy(camera.quaternion);
+
+  setProgress(1, 'Ready');
+  loadStatus.textContent = 'Ready';
+  startBtn.hidden = false;
+} catch (e) {
+  const msg = 'Could not load "' + SPLAT_URL + '". ' + (e && e.message || e);
+  $('loadError').textContent = msg;
+  $('loadError').hidden = false;
+  loadStatus.textContent = 'Hmm, that didn\u2019t load.';
+  console.error(msg);
+}
+
+/* ---------------- first-person controls ---------------- */
+let yaw = 0, pitch = 0, started = false;
+const vel = new Vector3();
+const keys = {};
+const euler = new Euler(0, 0, 0, 'YXZ');
+
+function syncAnglesFromCamera(){
+  euler.setFromQuaternion(camera.quaternion, 'YXZ');
+  yaw = euler.y; pitch = euler.x;
+}
+function applyAngles(){
+  camera.quaternion.setFromEuler(euler.set(pitch, yaw, 0, 'YXZ'));
+}
+function resetSpawn(){
+  camera.position.copy(spawnPos);
+  camera.quaternion.copy(spawnQuat);
+  syncAnglesFromCamera();
+  vel.set(0, 0, 0);
+}
+
+addEventListener('keydown', e => {
+  if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+  keys[e.code] = true;
+  if (e.code === 'KeyH' && started) setHint(!hintVisible);
+  if (e.code === 'KeyR' && started) resetSpawn();
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* pointer lock (mouse look) */
+const isTouch = matchMedia('(pointer: coarse)').matches;
+function lockPointer(){
+  if (isTouch) return;
+  const el = renderer.domElement;
+  try {
+    const p = el.requestPointerLock({ unadjustedMovement: true });
+    if (p && p.catch) p.catch(() => { try { el.requestPointerLock(); } catch(_){} });
+  } catch(_) { try { el.requestPointerLock(); } catch(__){} }
+}
+document.addEventListener('pointerlockchange', () => {
+  const locked = document.pointerLockElement === renderer.domElement;
+  lockPill.classList.toggle('show', started && !locked && !isTouch);
+});
+document.addEventListener('mousemove', e => {
+  if (document.pointerLockElement !== renderer.domElement) return;
+  yaw   -= e.movementX * 0.0022;
+  pitch -= e.movementY * 0.0022;
+  pitch = Math.max(-1.55, Math.min(1.55, pitch));
+});
+lockPill.addEventListener('click', lockPointer);
+renderer.domElement.addEventListener('click', () => {
+  if (started && document.pointerLockElement !== renderer.domElement) lockPointer();
+});
+renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+
+/* ---------------- gamepad (Xbox controller) ---------------- */
+const padStatus = $('padStatus');
+let padPrev = [];
+function getPad(){
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  for (const p of pads) if (p && p.connected) return p;
+  return null;
+}
+const dz = v => Math.abs(v) < 0.16 ? 0 : (v - Math.sign(v) * 0.16) / 0.84;
+function refreshPadStatus(){
+  const p = getPad();
+  padStatus.textContent = p ? '\uD83C\uDFAE Controller connected: ' + p.id.slice(0, 40)
+                            : 'No controller detected';
+}
+addEventListener('gamepadconnected', refreshPadStatus);
+addEventListener('gamepaddisconnected', () => { padPrev = []; refreshPadStatus(); });
+
+function padButtonPressed(gp, i){
+  const b = gp.buttons[i];
+  const was = padPrev[i] || false;
+  const is = !!(b && (b.pressed || b.value > 0.5));
+  padPrev[i] = is;
+  return is && !was;
+}
+function handlePad(gp, dt){
+  const lx = dz(gp.axes[0] || 0), ly = dz(gp.axes[1] || 0);
+  const rx = dz(gp.axes[2] || 0), ry = dz(gp.axes[3] || 0);
+  yaw   -= rx * 2.4 * dt;
+  pitch -= ry * 2.4 * dt;
+  pitch = Math.max(-1.55, Math.min(1.55, pitch));
+  // A (0) or Start (9): begin, or toggle mouse capture
+  if (padButtonPressed(gp, 0) || padButtonPressed(gp, 9)) {
+    if (!started) startBtn.click();
+    else if (document.pointerLockElement) document.exitPointerLock();
+    else lockPointer();
+  }
+  // Y (3): back to start
+  if (padButtonPressed(gp, 3)) resetSpawn();
+  return { x: lx, y: ly };
+}
+
+/* ---------------- touch: joystick + drag look ---------------- */
+const joy = { x: 0, y: 0, id: null, cx: 0, cy: 0 };
+const look = { id: null, lx: 0, ly: 0 };
+const stickEl = $('stick'), knobEl = $('knob');
+function showStick(x, y){
+  stickEl.style.display = 'block';
+  stickEl.style.left = (x - 60) + 'px';
+  stickEl.style.top = (y - 60) + 'px';
+}
+addEventListener('touchstart', e => {
+  if (!started) return;
+  for (const t of e.changedTouches) {
+    if (t.clientX < innerWidth * 0.45 && joy.id === null) {
+      joy.id = t.identifier; joy.cx = t.clientX; joy.cy = t.clientY;
+      showStick(t.clientX, t.clientY);
+    } else if (look.id === null) {
+      look.id = t.identifier; look.lx = t.clientX; look.ly = t.clientY;
+    }
+  }
+  e.preventDefault();
+}, { passive: false });
+addEventListener('touchmove', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joy.id) {
+      let dx = (t.clientX - joy.cx) / 48, dy = (t.clientY - joy.cy) / 48;
+      const l = Math.hypot(dx, dy);
+      if (l > 1) { dx /= l; dy /= l; }
+      joy.x = dx; joy.y = dy;
+      knobEl.style.transform =
+        `translate(calc(-50% + ${dx * 34}px), calc(-50% + ${dy * 34}px))`;
+    } else if (t.identifier === look.id) {
+      yaw   -= (t.clientX - look.lx) * 0.0042;
+      pitch -= (t.clientY - look.ly) * 0.0042;
+      pitch = Math.max(-1.55, Math.min(1.55, pitch));
+      look.lx = t.clientX; look.ly = t.clientY;
+    }
+  }
+  e.preventDefault();
+}, { passive: false });
+function endTouch(e){
+  for (const t of e.changedTouches) {
+    if (t.identifier === joy.id) {
+      joy.id = null; joy.x = 0; joy.y = 0;
+      stickEl.style.display = 'none';
+      knobEl.style.transform = 'translate(-50%,-50%)';
+    }
+    if (t.identifier === look.id) look.id = null;
+  }
+}
+addEventListener('touchend', endTouch);
+addEventListener('touchcancel', endTouch);
+
+/* ---------------- start ---------------- */
+// Fades are driven by the render loop's own clock (tick), not by rAF or
+// CSS transitions, so overlay visibility never depends on the compositor's
+// animation clock. Deterministic in every browser.
+const activeFades = new Set();
+function fadeEl(el, show, ms = 400){
+  for (const f of activeFades) if (f.el === el) activeFades.delete(f);
+  const cur = parseFloat(el.style.opacity);
+  activeFades.add({ el, from: isNaN(cur) ? (show ? 0 : 1) : cur,
+                    to: show ? 1 : 0, t: 0, ms });
+  if (show) { el.style.visibility = 'visible'; el.style.pointerEvents = ''; }
+  else { el.style.pointerEvents = 'none'; }
+}
+function stepFades(dtMs){
+  for (const f of activeFades) {
+    f.t += dtMs;
+    const k = Math.min(1, f.t / f.ms);
+    const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+    f.el.style.opacity = String(f.from + (f.to - f.from) * e);
+    if (k >= 1) {
+      activeFades.delete(f);
+      if (f.to === 0) f.el.style.visibility = 'hidden';
+    }
+  }
+}
+let hintVisible = false;
+function setHint(v){
+  hintVisible = v;
+  fadeEl(hintEl, v, 350);
+}
+startBtn.addEventListener('click', () => {
+  if (started) return;
+  started = true;
+  syncAnglesFromCamera();
+  fadeEl(loaderEl, false, 800);
+  setHint(true);
+  refreshPadStatus();
+  lockPointer();
+  setTimeout(() => { if (hintVisible) setHint(false); }, 14000);
+});
+
+/* ---------------- main loop ---------------- */
+const clock = { last: performance.now() };
+function tick(now){
+  const dt = Math.min(0.05, (now - clock.last) / 1000);
+  clock.last = now;
+  stepFades(dt * 1000);
+
+  if (started) {
+    let ix = ((keys.KeyD || keys.ArrowRight) ? 1 : 0) - ((keys.KeyA || keys.ArrowLeft) ? 1 : 0);
+    let iz = ((keys.KeyS || keys.ArrowDown) ? 1 : 0) - ((keys.KeyW || keys.ArrowUp) ? 1 : 0);
+    let iy = (keys.Space ? 1 : 0) - (keys.KeyC ? 1 : 0);
+    ix += joy.x; iz += joy.y;
+
+    const gp = getPad();
+    if (gp) {
+      const mv = handlePad(gp, dt);
+      ix += mv.x; iz += mv.y;
+      if (gp.buttons[7] && gp.buttons[7].value > 0.3) iy += 1;  // RT: up
+      if (gp.buttons[6] && gp.buttons[6].value > 0.3) iy -= 1;  // LT: down
+    }
+
+    const len = Math.hypot(ix, iz);
+    if (len > 1) { ix /= len; iz /= len; }
+    iy = Math.max(-1, Math.min(1, iy));
+
+    applyAngles();
+    const sprint = (keys.ShiftLeft || keys.ShiftRight) ? 2.6 : 1;
+    const speed = 2.4 * sprint;
+    const s = Math.sin(yaw), c = Math.cos(yaw);
+    // forward = (-s,0,-c), right = (c,0,-s); iz>0 means "back"
+    const tx = (ix * c + iz * s) * speed;
+    const tz = (-ix * s + iz * c) * speed;
+    const ty = iy * speed * 0.8;
+    const k = 1 - Math.exp(-10 * dt);
+    vel.x += (tx - vel.x) * k;
+    vel.y += (ty - vel.y) * k;
+    vel.z += (tz - vel.z) * k;
+    camera.position.x += vel.x * dt;
+    camera.position.y += vel.y * dt;
+    camera.position.z += vel.z * dt;
+  }
+
+  renderer.render(scene, camera);
+}
+renderer.setAnimationLoop(tick);
+</script>
+</body>
+</html>
